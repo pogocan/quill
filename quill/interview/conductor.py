@@ -11,7 +11,8 @@ from quill.session import Session, SessionManager
 SYSTEM_PROMPT = (
     "You are a structured interview assistant. "
     "Ask questions naturally, confirm answers before storing, "
-    "and guide the user through the process."
+    "and guide the user through the process. "
+    "Do not greet the user on every turn. Only greet once at the start."
 )
 
 _CONFIRM_KEYWORDS = frozenset(
@@ -101,18 +102,43 @@ class Conductor:
                 query = f"{query} Context: {context}"
             result = cap.query_with_fallback(query)
             if result.value is not None:
+                raw_value = result.value
+                # Clean the RAG answer down to a short value
+                try:
+                    cleaned = self.llm.complete(
+                        [
+                            {
+                                "role": "user",
+                                "content": (
+                                    f"The following is a RAG result for field "
+                                    f"'{action.field_key}':\n{raw_value}\n\n"
+                                    f"Extract just the core value as a short phrase "
+                                    f"(2-5 words max). For example if the answer is "
+                                    f"about cooking methods, return just \"steaming\" "
+                                    f"or \"pan frying\".\n"
+                                    f"Return only the extracted value, nothing else."
+                                ),
+                            }
+                        ],
+                        system="You extract short, clean values from verbose RAG results. Return only the value.",
+                        max_tokens=64,
+                        temperature=0.0,
+                    ).strip()
+                except Exception:
+                    cleaned = str(raw_value)
+                result.raw = raw_value
                 self._pending_confirmation = {
                     "field": action.field_key,
-                    "value": result.value,
+                    "value": cleaned,
                     "source": action.source,
                 }
                 return ConductorResponse(
                     message=(
                         f"I found a value for {action.field_key}: "
-                        f"{result.value}. Can you confirm this is correct?"
+                        f"{cleaned}. Can you confirm this is correct?"
                     ),
                     needs_confirmation=True,
-                    proposed_value=result.value,
+                    proposed_value=cleaned,
                     proposed_field=action.field_key,
                 )
         # Capability unavailable or returned nothing — fall back to asking
