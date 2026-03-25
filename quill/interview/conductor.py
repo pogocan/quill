@@ -94,12 +94,37 @@ class Conductor:
         """Use capability to resolve a field, then ask user to confirm."""
         cap = self.capabilities.get(action.source)
         if cap:
-            context = ", ".join(
-                f"{k}={v}" for k, v in session.fields.items()
-            )
-            query = action.question or ""
-            if context:
-                query = f"{query} Context: {context}"
+            # Build a rich search query via LLM
+            try:
+                query = self.llm.complete(
+                    [
+                        {
+                            "role": "user",
+                            "content": (
+                                f"You are building a search query for a document corpus.\n\n"
+                                f"Field being resolved: {action.field_key}\n"
+                                f"Base question: {action.question}\n"
+                                f"Search hints: {action.agent_note}\n"
+                                f"Known context: {session.fields}\n\n"
+                                f"Write a specific, detailed search query that will "
+                                f"find the most relevant information in the documents. "
+                                f"Include specific terms from the context.\n"
+                                f"Return only the search query, nothing else."
+                            ),
+                        }
+                    ],
+                    system="You write precise search queries for document retrieval. Return only the query.",
+                    max_tokens=256,
+                    temperature=0.0,
+                ).strip()
+            except Exception:
+                # Fallback: manual query construction
+                context = ", ".join(
+                    f"{k}={v}" for k, v in session.fields.items()
+                )
+                query = action.question or ""
+                if context:
+                    query = f"{query} Context: {context}"
             result = cap.query_with_fallback(query)
             if result.value is not None:
                 raw_value = result.value
